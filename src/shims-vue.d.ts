@@ -17,4 +17,3 @@ declare module '*.vue' {
  
 declare module 'mockjs';
 declare module 'uuid';
-declare module 'element-plus/dist/locale/zh-cn.mjs';
