@@ -1,0 +1,20 @@
+
+declare module "*.json" {
+  const jsonValue: any;
+  export default jsonValue;
+}
+
+declare type refVNode<T> = T | null; 
+
+
+
+/* eslint-disable */
+declare module '*.vue' {
+  import type { DefineComponent } from 'vue'
+  const component: DefineComponent<{}, {}, any>
+  export default component
+}
+ 
+declare module 'mockjs';
+declare module 'uuid';
+declare module 'element-plus/dist/locale/zh-cn.mjs';
