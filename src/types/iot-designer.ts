@@ -4,12 +4,33 @@ export type LinkRoute = 'straight' | 'horizontal' | 'vertical' | 'manual';
 export type RoutePoint = [number, number];
 export type LinkLineStyle = 'solid' | 'dashed' | 'dotted';
 export type DeviceIconKind = 'text' | 'svg' | 'image';
+export type NodeAnimationEffect = 'none' | 'pulse' | 'blink' | 'spin' | 'shake';
+export type NodeAnimationTrigger = 'always' | 'byStatus' | 'whenWaiting';
 
 export interface DeviceIconConfig {
   kind: DeviceIconKind;
   text?: string;
   svg?: string;
   imageUrl?: string;
+}
+
+export interface DeviceStatusIconRule {
+  status: DeviceStatus;
+  iconConfig: DeviceIconConfig;
+}
+
+export interface NodeAnimationConfig {
+  effect: NodeAnimationEffect;
+  trigger: NodeAnimationTrigger;
+  statuses?: DeviceStatus[];
+  speedMs?: number;
+  waitForStatus?: DeviceStatus;
+  statusIconRules?: DeviceStatusIconRule[];
+}
+
+export interface DeviceNextStep {
+  targetId: string;
+  arrivalStatus: DeviceStatus;
 }
 
 export interface DeviceMetrics {
@@ -50,6 +71,10 @@ export interface DeviceNode {
   y: number;
   icon?: string;
   iconConfig?: DeviceIconConfig;
+  animation?: NodeAnimationConfig;
+  nextNodeId?: string;
+  nextNodeArrivalStatus?: DeviceStatus;
+  nextSteps?: DeviceNextStep[];
   metrics?: DeviceMetrics;
   initialConfig?: DeviceInitialConfig;
   width?: number;
@@ -80,5 +105,8 @@ export interface DesignerGraphData {
 export interface StatusPayload {
   id: string;
   status: DeviceStatus;
+  nextNodeId?: string;
   metrics?: DeviceNode['metrics'];
+  iconConfig?: DeviceIconConfig;
+  animation?: Partial<NodeAnimationConfig>;
 }

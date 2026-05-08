@@ -114,6 +114,7 @@
           @node-select="handleNodeSelect"
           @edge-select="handleEdgeSelect"
           @data-change="handleDataChange"
+          @arrival-status-change="handleArrivalStatusChange"
         />
       </section>
 
@@ -160,6 +161,139 @@
                 @change="commitSelectedNode"
                 aria-label="设备高度"
               />
+            </div>
+          </section>
+          <section class="inspector-section node-config-section">
+            <div class="section-title-row">
+              <label>节点图标</label>
+              <div class="template-icon-preview">
+                <img v-if="selectedNodeDraftPreviewImage" :src="selectedNodeDraftPreviewImage" alt="" />
+                <span v-else>{{ selectedNodeDraft.iconText.slice(0, 2) || selectedNodeDraft.name.slice(0, 2) || '设' }}</span>
+              </div>
+            </div>
+            <div class="icon-kind-tabs" role="radiogroup" aria-label="节点图标类型">
+              <label>
+                <input type="radio" value="text" v-model="selectedNodeDraft.iconKind" @change="commitSelectedNode" />
+                <span>文字</span>
+              </label>
+              <label>
+                <input type="radio" value="svg" v-model="selectedNodeDraft.iconKind" @change="commitSelectedNode" />
+                <span>SVG</span>
+              </label>
+              <label>
+                <input type="radio" value="image" v-model="selectedNodeDraft.iconKind" @change="commitSelectedNode" />
+                <span>图片</span>
+              </label>
+            </div>
+            <input
+              v-if="selectedNodeDraft.iconKind === 'text'"
+              class="form-control"
+              v-model="selectedNodeDraft.iconText"
+              maxlength="8"
+              placeholder="例如 GW"
+              @change="commitSelectedNode"
+            />
+            <textarea
+              v-else-if="selectedNodeDraft.iconKind === 'svg'"
+              class="form-control form-control--textarea"
+              v-model="selectedNodeDraft.iconSvg"
+              spellcheck="false"
+              placeholder="<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 24 24&quot;>...</svg>"
+              @change="commitSelectedNode"
+            />
+            <input
+              v-else
+              class="form-control"
+              v-model="selectedNodeDraft.iconImageUrl"
+              placeholder="https://... 或 data:image/png;base64,..."
+              @change="commitSelectedNode"
+            />
+          </section>
+          <section class="inspector-section node-config-section">
+            <div class="section-title-row">
+              <label>状态动画</label>
+              <span>{{ selectedNodeAnimationSummary }}</span>
+            </div>
+            <select class="form-control" v-model="selectedNodeDraft.animationEffect" @change="commitSelectedNode">
+              <option value="none">无动画</option>
+              <option value="pulse">呼吸</option>
+              <option value="blink">闪烁</option>
+              <option value="spin">旋转</option>
+              <option value="shake">抖动</option>
+            </select>
+            <select class="form-control" v-model="selectedNodeDraft.animationTrigger" @change="commitSelectedNode">
+              <option value="always">始终播放</option>
+              <option value="byStatus">按状态播放</option>
+              <option value="whenWaiting">等待指定状态</option>
+            </select>
+            <div class="node-animation-grid">
+              <label>
+                <span>速度 ms</span>
+                <input
+                  class="form-control"
+                  type="number"
+                  min="300"
+                  max="5000"
+                  step="100"
+                  v-model.number="selectedNodeDraft.animationSpeedMs"
+                  @change="commitSelectedNode"
+                />
+              </label>
+              <label>
+                <span>等待状态</span>
+                <select class="form-control" v-model="selectedNodeDraft.animationWaitForStatus" @change="commitSelectedNode">
+                  <option value="online">在线</option>
+                  <option value="warning">告警</option>
+                  <option value="offline">离线</option>
+                  <option value="maintenance">检修</option>
+                </select>
+              </label>
+            </div>
+            <div v-if="selectedNodeDraft.animationTrigger === 'byStatus'" class="node-status-checks">
+              <label v-for="status in deviceStatuses" :key="status.value">
+                <input
+                  type="checkbox"
+                  :value="status.value"
+                  v-model="selectedNodeDraft.animationStatuses"
+                  @change="commitSelectedNode"
+                />
+                <span>{{ status.label }}</span>
+              </label>
+            </div>
+            <div class="node-status-rule-grid">
+              <label>
+                <span>状态图标</span>
+                <select class="form-control" v-model="selectedNodeDraft.statusIconRuleStatus">
+                  <option value="online">在线</option>
+                  <option value="warning">告警</option>
+                  <option value="offline">离线</option>
+                  <option value="maintenance">检修</option>
+                </select>
+              </label>
+              <button class="button button--secondary" type="button" @click="saveSelectedNodeStatusIconRule">绑定当前图标</button>
+            </div>
+            <div v-if="selectedNodeStatusIconRules.length" class="status-rule-list">
+              <div v-for="rule in selectedNodeStatusIconRules" :key="rule.status">
+                <span>{{ getStatusLabel(rule.status) }}</span>
+                <button class="text-button text-button--danger" type="button" @click="deleteSelectedNodeStatusIconRule(rule.status)">删除</button>
+              </div>
+            </div>
+          </section>
+          <section class="inspector-section node-config-section">
+            <div class="section-title-row">
+              <label>下一节点分支</label>
+              <span>{{ selectedNodeNextNodeLabel }}</span>
+            </div>
+            <div class="next-branch-summary-card">
+              <div>
+                <strong>{{ selectedNodeNextPanelState.summary }}</strong>
+                <p>{{ selectedNodeNextEmptyText || '复杂分支已收起到弹框中，避免属性面板内容过多。' }}</p>
+              </div>
+              <button class="button button--primary" type="button" @click="openNextStepModal">配置分支</button>
+            </div>
+            <div class="next-branch-summary-actions">
+              <button class="button button--secondary" type="button" :disabled="!selectedNodeNextPanelState.canRun" @click="triggerSelectedNodeNextStep">运行动画</button>
+              <button class="text-button" type="button" :disabled="!selectedNodeNextPanelState.canClear" @click="clearSelectedNodeNextSteps">清空分支</button>
             </div>
           </section>
           <section class="status-grid">
@@ -298,17 +432,39 @@
         <div v-else class="empty-state">选择节点或线查看属性</div>
 
         <section class="json-panel">
-          <div class="panel-title panel-title--compact">
-            <h2>图纸 JSON</h2>
-            <div class="json-actions">
-              <button class="text-button" type="button" @click="saveSnapshot">保存本地</button>
-              <button class="text-button" type="button" @click="loadSavedSnapshot">载入本地</button>
-              <button class="text-button" type="button" @click="triggerImport">导入 JSON</button>
-              <button class="text-button" type="button" @click="exportSnapshot">导出 JSON</button>
+          <header class="json-panel__header">
+            <div>
+              <h2>图纸 JSON</h2>
+              <p>本地备份、导入导出与数据预览</p>
             </div>
+            <span>{{ designerData.nodes.length }} 节点 · {{ designerData.edges.length }} 线</span>
+          </header>
+          <div class="json-actions">
+            <button class="json-action json-action--primary" type="button" @click="saveSnapshot">
+              <span>保存本地</span>
+              <small>写入浏览器</small>
+            </button>
+            <button class="json-action" type="button" @click="loadSavedSnapshot">
+              <span>载入本地</span>
+              <small>恢复缓存</small>
+            </button>
+            <button class="json-action" type="button" @click="triggerImport">
+              <span>导入 JSON</span>
+              <small>读取文件</small>
+            </button>
+            <button class="json-action" type="button" @click="exportSnapshot">
+              <span>导出 JSON</span>
+              <small>下载文件</small>
+            </button>
           </div>
           <input ref="importInputRef" class="hidden-input" type="file" accept="application/json,.json" @change="importSnapshot" />
-          <pre>{{ graphSnapshot }}</pre>
+          <div class="json-preview">
+            <div class="json-preview__header">
+              <span>当前图纸数据</span>
+              <strong>{{ graphSnapshot.length }} bytes</strong>
+            </div>
+            <pre>{{ graphSnapshot }}</pre>
+          </div>
         </section>
       </aside>
     </section>
@@ -435,6 +591,84 @@
         </form>
       </section>
     </div>
+    <div v-if="nextStepModalVisible && selectedNode" class="modal-backdrop" @click.self="closeNextStepModal">
+      <section class="template-modal next-step-modal" role="dialog" aria-modal="true" aria-labelledby="next-step-modal-title">
+        <header class="template-modal__header">
+          <div>
+            <h2 id="next-step-modal-title">下一节点分支</h2>
+            <p>当前节点：{{ selectedNode.name }}。只允许配置已经从当前节点连线出去的目标。</p>
+          </div>
+          <button class="icon-button" type="button" aria-label="关闭" @click="closeNextStepModal">
+            <svg class="icon-button__svg" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m6 6 12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="next-step-modal__body">
+          <div class="next-branch-card">
+            <div class="next-branch-card__header">
+              <div>
+                <strong>添加 / 更新分支</strong>
+                <p>可配置多条分支；重复目标会更新状态，不会生成重复分支。</p>
+              </div>
+              <span>{{ selectedNodeNextOptions.length }} 可选</span>
+            </div>
+            <div class="node-next-row">
+              <label>
+                <span>目标节点</span>
+                <select class="form-control" v-model="selectedNodeDraft.nextNodeId" :disabled="!selectedNodeNextOptions.length">
+                  <option value="">选择一个目标节点</option>
+                  <option v-for="node in selectedNodeNextOptions" :key="node.id" :value="node.id">
+                    {{ node.name }}{{ node.reachable ? '' : '（自动连线）' }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                <span>到达状态</span>
+                <select class="form-control" v-model="selectedNodeDraft.nextNodeArrivalStatus">
+                  <option value="online">到达后在线</option>
+                  <option value="warning">到达后告警</option>
+                  <option value="offline">到达后离线</option>
+                  <option value="maintenance">到达后检修</option>
+                </select>
+              </label>
+            </div>
+            <div v-if="selectedNodeNextEmptyText" class="next-branch-empty">{{ selectedNodeNextEmptyText }}</div>
+            <div class="next-step-actions">
+              <button class="button button--primary" type="button" :disabled="!selectedNodeDraft.nextNodeId" @click="addSelectedNodeNextStep">添加/更新分支</button>
+              <button class="button button--secondary" type="button" :disabled="!selectedNodeNextPanelState.canRun" @click="triggerSelectedNodeNextStep">运行动画</button>
+              <button class="text-button" type="button" :disabled="!selectedNodeNextPanelState.canClear" @click="clearSelectedNodeNextSteps">清空</button>
+            </div>
+          </div>
+
+          <div class="next-step-modal__list-header">
+            <strong>已配置分支</strong>
+            <span>{{ selectedNodeNextPanelState.count }} 条</span>
+          </div>
+          <div v-if="selectedNodeDraft.nextSteps.length" class="next-step-list next-step-list--modal">
+            <div v-for="step in selectedNodeDraft.nextSteps" :key="step.targetId" class="next-step-row">
+              <div class="next-step-row__target">
+                <strong>{{ getNodeName(step.targetId) }}</strong>
+                <small>{{ step.targetId }}</small>
+              </div>
+              <select class="form-control form-control--compact" :value="step.arrivalStatus" @change="updateSelectedNodeNextStepStatus(step.targetId, $event)">
+                <option value="online">在线</option>
+                <option value="warning">告警</option>
+                <option value="offline">离线</option>
+                <option value="maintenance">检修</option>
+              </select>
+              <button class="text-button text-button--danger" type="button" @click="deleteSelectedNodeNextStep(step.targetId)">删除</button>
+            </div>
+          </div>
+          <div v-else class="next-branch-empty">暂无分支，请先选择可达目标并添加。</div>
+        </div>
+
+        <footer class="template-modal__footer next-step-modal__footer">
+          <button class="button button--secondary" type="button" @click="closeNextStepModal">完成</button>
+        </footer>
+      </section>
+    </div>
     <div v-if="noticeVisible" class="toast">{{ noticeText }}</div>
   </main>
 </template>
@@ -443,7 +677,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import IoTGraphCanvas from '@/components/iot-designer/IoTGraphCanvas.vue';
 import { deviceTemplates, initialGraphData, mockStatusPayloads } from '@/data/iot-demo';
-import type { CanvasMode, DesignerGraphData, DeviceIconKind, DeviceLink, DeviceNode, DeviceTemplate, RoutePoint, StatusPayload } from '@/types/iot-designer';
+import { commitNextStepsForNode, getNextStepOptions, getNextStepPanelState, normalizeNextSteps as normalizeDeviceNextSteps } from '@/utils/next-steps';
+import type { CanvasMode, DesignerGraphData, DeviceIconConfig, DeviceIconKind, DeviceLink, DeviceNextStep, DeviceNode, DeviceStatus, DeviceTemplate, NodeAnimationConfig, NodeAnimationEffect, NodeAnimationTrigger, RoutePoint, StatusPayload } from '@/types/iot-designer';
 
 const graphCanvasRef = ref<InstanceType<typeof IoTGraphCanvas>>();
 const importInputRef = ref<HTMLInputElement>();
@@ -455,6 +690,19 @@ const selectedNodeDraft = reactive({
   status: 'online',
   width: 156,
   height: 74,
+  iconKind: 'text' as DeviceIconKind,
+  iconText: '',
+  iconSvg: '',
+  iconImageUrl: '',
+  animationEffect: 'none' as NodeAnimationEffect,
+  animationTrigger: 'always' as NodeAnimationTrigger,
+  animationStatuses: ['warning'] as DeviceStatus[],
+  animationSpeedMs: 1200,
+  animationWaitForStatus: 'online' as DeviceStatus,
+  statusIconRuleStatus: 'warning' as DeviceStatus,
+  nextNodeId: '',
+  nextNodeArrivalStatus: 'online' as DeviceStatus,
+  nextSteps: [] as DeviceNextStep[],
 });
 const selectedEdgeDraft = reactive({
   name: '',
@@ -479,6 +727,7 @@ const customDeviceDraft = reactive({
   status: 'online' as DeviceTemplate['defaultStatus'],
 });
 const templateModalVisible = ref(false);
+const nextStepModalVisible = ref(false);
 const templateDraft = reactive({
   originalType: '',
   type: '',
@@ -510,6 +759,12 @@ const statusStrokeMap: Record<DeviceNode['status'], string> = {
   offline: '#94a3b8',
   maintenance: '#4f46e5',
 };
+const deviceStatuses: Array<{ value: DeviceStatus; label: string }> = [
+  { value: 'online', label: '在线' },
+  { value: 'warning', label: '告警' },
+  { value: 'offline', label: '离线' },
+  { value: 'maintenance', label: '检修' },
+];
 
 const availableDeviceTemplates = computed(() => {
   const templates = new Map<string, DeviceTemplate>();
@@ -522,6 +777,42 @@ const templateDraftPreviewImage = computed(() => {
   if (templateDraft.iconKind === 'svg') return svgToDataUrl(templateDraft.iconSvg);
   if (templateDraft.iconKind === 'image') return templateDraft.iconImageUrl.trim();
   return '';
+});
+
+const selectedNodeDraftPreviewImage = computed(() => getIconConfigImage(buildDraftIconConfig()));
+
+const selectedNodeAnimationSummary = computed(() => {
+  if (selectedNodeDraft.animationEffect === 'none') return '未启用';
+  if (selectedNodeDraft.animationTrigger === 'byStatus') {
+    return `状态为 ${selectedNodeDraft.animationStatuses.map(getStatusLabel).join(' / ') || '未选'} 时播放`;
+  }
+  if (selectedNodeDraft.animationTrigger === 'whenWaiting') {
+    return `未到 ${getStatusLabel(selectedNodeDraft.animationWaitForStatus)} 时播放`;
+  }
+  return '始终播放';
+});
+
+const selectedNodeStatusIconRules = computed(() => selectedNode.value?.animation?.statusIconRules || []);
+
+const selectedNodeNextOptions = computed(() => {
+  const nodeId = selectedNode.value?.id;
+  if (!nodeId) return [];
+  return getNextStepOptions(nodeId, designerData.value.nodes, designerData.value.edges);
+});
+
+const selectedNodeNextEmptyText = computed(() => {
+  if (!selectedNode.value) return '请选择节点后配置分支';
+  if (!selectedNodeNextOptions.value.length) return '画布中暂无其它节点';
+  return '';
+});
+
+const selectedNodeNextPanelState = computed(() => getNextStepPanelState(selectedNodeDraft.nextSteps, getNodeName));
+
+const selectedNodeNextNodeLabel = computed(() => {
+  if (!selectedNode.value) return '未选择';
+  if (selectedNodeDraft.nextSteps.length) return `${selectedNodeDraft.nextSteps.length} 条分支`;
+  if (selectedNodeNextOptions.value.length) return '可添加分支';
+  return '无目标';
 });
 
 const modeHint = computed(() => {
@@ -547,6 +838,21 @@ watch(
     selectedNodeDraft.status = node?.status || 'online';
     selectedNodeDraft.width = normalizeSizeValue(node?.width, defaultNodeSize.width, nodeSizeBounds.minWidth, nodeSizeBounds.maxWidth);
     selectedNodeDraft.height = normalizeSizeValue(node?.height, defaultNodeSize.height, nodeSizeBounds.minHeight, nodeSizeBounds.maxHeight);
+    const iconConfig = normalizeNodeIconConfig(node);
+    selectedNodeDraft.iconKind = iconConfig.kind;
+    selectedNodeDraft.iconText = iconConfig.text;
+    selectedNodeDraft.iconSvg = iconConfig.svg || defaultDeviceSvg;
+    selectedNodeDraft.iconImageUrl = iconConfig.imageUrl;
+    const animation = normalizeNodeAnimationConfig(node);
+    selectedNodeDraft.animationEffect = animation.effect;
+    selectedNodeDraft.animationTrigger = animation.trigger;
+    selectedNodeDraft.animationStatuses = [...animation.statuses];
+    selectedNodeDraft.animationSpeedMs = animation.speedMs;
+    selectedNodeDraft.animationWaitForStatus = animation.waitForStatus;
+    selectedNodeDraft.statusIconRuleStatus = animation.statusIconRules[0]?.status || 'warning';
+    selectedNodeDraft.nextNodeId = node?.nextNodeId || '';
+    selectedNodeDraft.nextNodeArrivalStatus = node?.nextNodeArrivalStatus || 'online';
+    selectedNodeDraft.nextSteps = normalizeDeviceNextSteps(node);
   },
   { immediate: true },
 );
@@ -627,6 +933,26 @@ function isDeviceIconKind(value: unknown): value is DeviceIconKind {
   return value === 'text' || value === 'svg' || value === 'image';
 }
 
+function isDeviceStatus(value: unknown): value is DeviceStatus {
+  return value === 'online' || value === 'warning' || value === 'offline' || value === 'maintenance';
+}
+
+function isNodeAnimationEffect(value: unknown): value is NodeAnimationEffect {
+  return value === 'none' || value === 'pulse' || value === 'blink' || value === 'spin' || value === 'shake';
+}
+
+function isNodeAnimationTrigger(value: unknown): value is NodeAnimationTrigger {
+  return value === 'always' || value === 'byStatus' || value === 'whenWaiting';
+}
+
+function getStatusLabel(status: DeviceStatus) {
+  return deviceStatuses.find((item) => item.value === status)?.label || status;
+}
+
+function getNodeName(nodeId: string) {
+  return designerData.value.nodes.find((node) => node.id === nodeId)?.name || nodeId;
+}
+
 function normalizeDeviceTemplate(template: DeviceTemplate): DeviceTemplate {
   const iconConfig = normalizeTemplateIconConfig(template);
   return {
@@ -652,6 +978,70 @@ function normalizeTemplateIconConfig(template: DeviceTemplate) {
     svg: '',
     imageUrl: '',
   };
+}
+
+function normalizeNodeIconConfig(node?: DeviceNode | null): Required<DeviceIconConfig> {
+  const config = node?.iconConfig;
+  if (config && isDeviceIconKind(config.kind)) {
+    return {
+      kind: config.kind,
+      text: config.text || node?.icon || node?.name.slice(0, 2) || '设备',
+      svg: config.svg || '',
+      imageUrl: config.imageUrl || '',
+    };
+  }
+  return {
+    kind: 'text',
+    text: node?.icon || node?.name.slice(0, 2) || '设备',
+    svg: '',
+    imageUrl: '',
+  };
+}
+
+function normalizeNodeAnimationConfig(node?: DeviceNode | null) {
+  const animation = node?.animation;
+  const effect = animation?.effect;
+  const trigger = animation?.trigger;
+  const waitForStatus = animation?.waitForStatus;
+  const statuses = animation?.statuses?.filter(isDeviceStatus);
+  return {
+    effect: isNodeAnimationEffect(effect) ? effect : 'none',
+    trigger: isNodeAnimationTrigger(trigger) ? trigger : 'always',
+    statuses: statuses?.length ? statuses : (['warning'] as DeviceStatus[]),
+    speedMs: normalizeSizeValue(animation?.speedMs, 1200, 300, 5000),
+    waitForStatus: isDeviceStatus(waitForStatus) ? waitForStatus : 'online',
+    statusIconRules: animation?.statusIconRules?.filter((rule) => isDeviceStatus(rule.status) && isDeviceIconKind(rule.iconConfig.kind)) || [],
+  };
+}
+
+function mergeNodeAnimation(animation: DeviceNode['animation'], patch: Partial<NodeAnimationConfig>): NodeAnimationConfig {
+  return normalizeNodeAnimationConfig({
+    id: '',
+    type: '',
+    name: '',
+    status: 'offline',
+    x: 0,
+    y: 0,
+    animation: {
+      ...animation,
+      ...patch,
+    } as NodeAnimationConfig,
+  });
+}
+
+function buildDraftIconConfig(): DeviceIconConfig {
+  return {
+    kind: selectedNodeDraft.iconKind,
+    text: selectedNodeDraft.iconText.trim() || selectedNodeDraft.name.slice(0, 2) || '设备',
+    svg: selectedNodeDraft.iconKind === 'svg' ? selectedNodeDraft.iconSvg.trim() : '',
+    imageUrl: selectedNodeDraft.iconKind === 'image' ? selectedNodeDraft.iconImageUrl.trim() : '',
+  };
+}
+
+function getIconConfigImage(config: DeviceIconConfig) {
+  if (config.kind === 'svg') return svgToDataUrl(config.svg || '');
+  if (config.kind === 'image') return config.imageUrl || '';
+  return '';
 }
 
 function svgToDataUrl(svg: string) {
@@ -697,6 +1087,15 @@ function openTemplateSettings(template: DeviceTemplate) {
 
 function closeTemplateSettings() {
   templateModalVisible.value = false;
+}
+
+function openNextStepModal() {
+  if (!selectedNode.value) return;
+  nextStepModalVisible.value = true;
+}
+
+function closeNextStepModal() {
+  nextStepModalVisible.value = false;
 }
 
 function numberToDraftValue(value: number | undefined) {
@@ -763,11 +1162,13 @@ function saveTemplateSettings() {
 function handleNodeSelect(node: DeviceNode | null) {
   selectedNode.value = node ? { ...node } : null;
   if (node) selectedEdge.value = null;
+  nextStepModalVisible.value = false;
 }
 
 function handleEdgeSelect(edge: DeviceLink | null) {
   selectedEdge.value = edge ? { ...edge } : null;
   if (edge) selectedNode.value = null;
+  nextStepModalVisible.value = false;
 }
 
 function handleDataChange(data: DesignerGraphData) {
@@ -780,8 +1181,36 @@ function handleDataChange(data: DesignerGraphData) {
   }
 }
 
+function handleArrivalStatusChange(updates: Array<{ id: string; status: DeviceStatus }>) {
+  if (!updates.length) return;
+  const statusByNodeId = new Map(updates.map((update) => [update.id, update.status]));
+  designerData.value = {
+    ...designerData.value,
+    nodes: designerData.value.nodes.map((node) => {
+      const status = statusByNodeId.get(node.id);
+      return status ? { ...node, status } : node;
+    }),
+  };
+  if (selectedNode.value) {
+    selectedNode.value = designerData.value.nodes.find((node) => node.id === selectedNode.value?.id) || null;
+  }
+}
+
 function commitSelectedNode() {
   if (!selectedNode.value) return;
+  if (selectedNodeDraft.iconKind === 'svg' && selectedNodeDraft.iconSvg.trim() && !selectedNodeDraft.iconSvg.trim().startsWith('<svg')) {
+    showNotice('SVG 图标需要以 <svg 开头');
+    return;
+  }
+  const iconConfig = buildDraftIconConfig();
+  const animationStatuses = selectedNodeDraft.animationStatuses.filter(isDeviceStatus);
+  const edgesWithNextSteps = ensureEdgesForNextSteps(selectedNode.value.id, selectedNodeDraft.nextSteps);
+  const committedNextSteps = commitNextStepsForNode(
+    selectedNode.value.id,
+    selectedNodeDraft.nextSteps,
+    edgesWithNextSteps,
+  );
+  const nextSteps = committedNextSteps.nextSteps;
   designerData.value = {
     ...designerData.value,
     nodes: designerData.value.nodes.map((node) =>
@@ -790,11 +1219,152 @@ function commitSelectedNode() {
             ...node,
             name: selectedNodeDraft.name,
             status: selectedNodeDraft.status as DeviceNode['status'],
+            icon: iconConfig.text || node.icon,
+            iconConfig,
+            nextNodeId: committedNextSteps.nextNodeId,
+            nextNodeArrivalStatus: committedNextSteps.nextNodeArrivalStatus || selectedNodeDraft.nextNodeArrivalStatus,
+            nextSteps,
+            animation: {
+              ...node.animation,
+              effect: selectedNodeDraft.animationEffect,
+              trigger: selectedNodeDraft.animationTrigger,
+              statuses: animationStatuses.length ? animationStatuses : (['warning'] as DeviceStatus[]),
+              speedMs: normalizeSizeValue(selectedNodeDraft.animationSpeedMs, 1200, 300, 5000),
+              waitForStatus: selectedNodeDraft.animationWaitForStatus,
+              statusIconRules: node.animation?.statusIconRules || [],
+            },
             width: normalizeSizeValue(selectedNodeDraft.width, defaultNodeSize.width, nodeSizeBounds.minWidth, nodeSizeBounds.maxWidth),
             height: normalizeSizeValue(selectedNodeDraft.height, defaultNodeSize.height, nodeSizeBounds.minHeight, nodeSizeBounds.maxHeight),
           }
         : node,
     ),
+    edges: edgesWithNextSteps,
+  };
+  selectedNode.value = designerData.value.nodes.find((node) => node.id === selectedNode.value?.id) || null;
+}
+
+function triggerSelectedNodeNextStep() {
+  if (!selectedNode.value || !selectedNodeDraft.nextSteps.length) return;
+  commitSelectedNode();
+  graphCanvasRef.value?.startPipelinePlayback(false);
+  graphCanvasRef.value?.advancePipelineWithSteps(selectedNodeDraft.nextSteps);
+  currentPayloads.value = [
+    {
+      id: selectedNode.value.id,
+      status: selectedNodeDraft.status as DeviceStatus,
+      nextNodeId: selectedNodeDraft.nextSteps[0].targetId,
+    },
+  ];
+}
+
+function addSelectedNodeNextStep() {
+  if (!selectedNode.value || !selectedNodeDraft.nextNodeId) return;
+  if (!designerData.value.nodes.some((node) => node.id === selectedNodeDraft.nextNodeId && node.id !== selectedNode.value?.id)) {
+    showNotice('请选择有效的下一节点');
+    return;
+  }
+  const nextStep: DeviceNextStep = {
+    targetId: selectedNodeDraft.nextNodeId,
+    arrivalStatus: selectedNodeDraft.nextNodeArrivalStatus,
+  };
+  selectedNodeDraft.nextSteps = [
+    ...selectedNodeDraft.nextSteps.filter((step) => step.targetId !== nextStep.targetId),
+    nextStep,
+  ];
+  commitSelectedNode();
+}
+
+function ensureEdgesForNextSteps(sourceId: string, steps: DeviceNextStep[]) {
+  const nextEdges = [...designerData.value.edges];
+  steps.forEach((step) => {
+    if (!step.targetId || step.targetId === sourceId) return;
+    if (!designerData.value.nodes.some((node) => node.id === step.targetId)) return;
+    if (nextEdges.some((edge) => edge.source === sourceId && edge.target === step.targetId)) return;
+    nextEdges.push({
+      id: `edge-${sourceId}-${step.targetId}-${Date.now()}`,
+      source: sourceId,
+      target: step.targetId,
+      name: '自动链路',
+      animated: true,
+      status: 'online',
+      route: 'horizontal',
+      routeOffset: 0,
+      stroke: '#2563eb',
+      lineWidth: 2,
+      lineStyle: 'dashed',
+      showArrow: true,
+    });
+  });
+  return nextEdges;
+}
+
+function updateSelectedNodeNextStepStatus(targetId: string, event: Event) {
+  const status = (event.target as HTMLSelectElement).value;
+  if (!isDeviceStatus(status)) return;
+  selectedNodeDraft.nextSteps = selectedNodeDraft.nextSteps.map((step) =>
+    step.targetId === targetId
+      ? {
+          ...step,
+          arrivalStatus: status,
+        }
+      : step,
+  );
+  commitSelectedNode();
+}
+
+function deleteSelectedNodeNextStep(targetId: string) {
+  selectedNodeDraft.nextSteps = selectedNodeDraft.nextSteps.filter((step) => step.targetId !== targetId);
+  commitSelectedNode();
+}
+
+function clearSelectedNodeNextSteps() {
+  selectedNodeDraft.nextSteps = [];
+  selectedNodeDraft.nextNodeId = '';
+  commitSelectedNode();
+}
+
+function saveSelectedNodeStatusIconRule() {
+  if (!selectedNode.value) return;
+  const iconConfig = buildDraftIconConfig();
+  if (iconConfig.kind === 'svg' && iconConfig.svg && !iconConfig.svg.startsWith('<svg')) {
+    showNotice('SVG 图标需要以 <svg 开头');
+    return;
+  }
+  const status = selectedNodeDraft.statusIconRuleStatus;
+  designerData.value = {
+    ...designerData.value,
+    nodes: designerData.value.nodes.map((node) => {
+      if (node.id !== selectedNode.value?.id) return node;
+      const animation = normalizeNodeAnimationConfig(node);
+      return {
+        ...node,
+        animation: {
+          ...animation,
+          statusIconRules: [
+            ...animation.statusIconRules.filter((rule) => rule.status !== status),
+            { status, iconConfig },
+          ],
+        },
+      };
+    }),
+  };
+  selectedNode.value = designerData.value.nodes.find((node) => node.id === selectedNode.value?.id) || null;
+}
+
+function deleteSelectedNodeStatusIconRule(status: DeviceStatus) {
+  if (!selectedNode.value) return;
+  designerData.value = {
+    ...designerData.value,
+    nodes: designerData.value.nodes.map((node) => {
+      if (node.id !== selectedNode.value?.id) return node;
+      return {
+        ...node,
+        animation: {
+          ...normalizeNodeAnimationConfig(node),
+          statusIconRules: (node.animation?.statusIconRules || []).filter((rule) => rule.status !== status),
+        },
+      };
+    }),
   };
   selectedNode.value = designerData.value.nodes.find((node) => node.id === selectedNode.value?.id) || null;
 }
@@ -938,6 +1508,10 @@ function applyMockStatus() {
             ...node,
             status: payload.status,
             metrics: payload.metrics || node.metrics,
+            iconConfig: payload.iconConfig || node.iconConfig,
+            animation: payload.animation
+              ? mergeNodeAnimation(node.animation, payload.animation)
+              : node.animation,
           }
         : node;
     }),
@@ -1049,7 +1623,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
-  min-width: 1180px;
+  min-width: 0;
   background: #f1f5f9;
   color: #0f172a;
 }
@@ -1063,22 +1637,36 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid #dbe3ef;
   background: #ffffff;
 
+  > div:first-child {
+    min-width: 0;
+  }
+
   h1 {
+    overflow: hidden;
     margin: 0;
     font-size: 22px;
     line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   p {
+    overflow: hidden;
     margin: 6px 0 0;
     color: #64748b;
     font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .topbar__actions {
   display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 10px;
+  min-width: 0;
 }
 
 .button,
@@ -1090,13 +1678,17 @@ onBeforeUnmount(() => {
 
 .button {
   height: 34px;
+  min-width: 0;
+  overflow: hidden;
   padding: 0 14px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   background: #ffffff;
   color: #0f172a;
   cursor: pointer;
+  text-overflow: ellipsis;
   transition: background 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s;
+  white-space: nowrap;
 
   &:hover {
     border-color: #2563eb;
@@ -1122,13 +1714,15 @@ onBeforeUnmount(() => {
 
 .designer-shell {
   display: grid;
-  grid-template-columns: 280px minmax(560px, 1fr) 340px;
+  grid-template-columns: minmax(220px, 280px) minmax(360px, 1fr) minmax(280px, 340px);
   min-height: 0;
+  min-width: 0;
 }
 
 .device-panel,
 .inspector-panel {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 18px;
   border-right: 1px solid #dbe3ef;
@@ -1148,13 +1742,22 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
 
   h2 {
+    min-width: 0;
+    overflow: hidden;
     margin: 0;
     font-size: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   span {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
     color: #64748b;
     font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -1212,15 +1815,22 @@ onBeforeUnmount(() => {
   }
 
   h3 {
+    overflow: hidden;
     margin: 0;
     font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   p {
+    display: -webkit-box;
+    overflow: hidden;
     margin: 4px 0 0;
     color: #64748b;
     font-size: 12px;
     line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 }
 
@@ -1276,6 +1886,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
+  min-width: 0;
 }
 
 .canvas-toolbar {
@@ -1283,19 +1894,28 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
   padding: 12px 16px;
   border-bottom: 1px solid #dbe3ef;
   background: #f8fafc;
 }
 
 .canvas-toolbar__hint {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   color: #64748b;
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .segmented {
-  display: inline-flex;
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(48px, 1fr));
   gap: 2px;
+  min-width: 0;
   padding: 3px;
   border: 1px solid #dbe3ef;
   border-radius: 8px;
@@ -1305,12 +1925,16 @@ onBeforeUnmount(() => {
 .segmented__item {
   height: 28px;
   min-width: 54px;
+  overflow: hidden;
   padding: 0 12px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #475569;
   cursor: pointer;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 
   &:hover {
     color: #0f172a;
@@ -1329,6 +1953,7 @@ onBeforeUnmount(() => {
   margin-bottom: 16px;
 
   label {
+    min-width: 0;
     color: #475569;
     font-size: 13px;
     font-weight: 600;
@@ -1341,6 +1966,14 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 10px;
 
+  label,
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   span {
     color: #64748b;
     font-size: 12px;
@@ -1349,6 +1982,7 @@ onBeforeUnmount(() => {
 
 .form-control {
   width: 100%;
+  min-width: 0;
   height: 34px;
   box-sizing: border-box;
   padding: 0 10px;
@@ -1387,6 +2021,265 @@ onBeforeUnmount(() => {
   border: 1px solid #dbe3ef;
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.node-config-section {
+  padding: 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.node-animation-grid,
+.node-status-rule-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+
+  span {
+    display: block;
+    margin-bottom: 5px;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+  }
+}
+
+.node-status-rule-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 112px);
+
+  .button {
+    width: 100%;
+    padding: 0;
+  }
+}
+
+.node-next-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 10px;
+  align-items: end;
+
+  label {
+    display: grid;
+    gap: 5px;
+  }
+
+  span {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+  }
+}
+
+.next-branch-summary-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, 104px);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+
+  strong {
+    display: block;
+    overflow: hidden;
+    color: #1e3a8a;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  p {
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}
+
+.next-branch-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+
+  .button {
+    flex: 1;
+  }
+
+  .text-button:disabled {
+    color: #94a3b8;
+    cursor: not-allowed;
+    text-decoration: none;
+  }
+}
+
+.next-branch-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.next-branch-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+
+  strong {
+    display: block;
+    overflow: hidden;
+    color: #1e3a8a;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  p {
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  > span {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 700;
+  }
+}
+
+.next-branch-empty {
+  padding: 9px 10px;
+  border: 1px dashed #93c5fd;
+  border-radius: 8px;
+  background: rgba(219, 234, 254, 0.45);
+  color: #1d4ed8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.next-step-actions {
+  display: grid;
+  grid-template-columns: minmax(108px, 1fr) minmax(76px, 92px) 42px;
+  gap: 8px;
+  align-items: center;
+
+  .button {
+    padding: 0 10px;
+  }
+
+  .text-button:disabled {
+    color: #94a3b8;
+    cursor: not-allowed;
+    text-decoration: none;
+  }
+}
+
+.next-step-list {
+  display: grid;
+  gap: 8px;
+}
+
+.next-step-list--modal {
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.next-step-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(78px, 96px) 42px;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(30, 64, 175, 0.06);
+}
+
+.next-step-row__target {
+  min-width: 0;
+
+  strong,
+  small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    color: #334155;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  small {
+    margin-top: 2px;
+    color: #94a3b8;
+    font-size: 11px;
+  }
+}
+
+.node-status-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 500;
+  }
+}
+
+.status-rule-list {
+  display: grid;
+  gap: 6px;
+
+  div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .edge-style-section {
@@ -1435,6 +2328,7 @@ onBeforeUnmount(() => {
 
 .edge-point-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -1457,6 +2351,7 @@ onBeforeUnmount(() => {
 }
 
 .point-empty {
+  overflow-wrap: anywhere;
   padding: 10px;
   border: 1px dashed #cbd5e1;
   border-radius: 8px;
@@ -1466,6 +2361,7 @@ onBeforeUnmount(() => {
 }
 
 .empty-state {
+  overflow-wrap: anywhere;
   display: grid;
   place-items: center;
   min-height: 116px;
@@ -1478,7 +2374,7 @@ onBeforeUnmount(() => {
 
 .status-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin: 16px 0 20px;
 
@@ -1501,32 +2397,169 @@ onBeforeUnmount(() => {
   }
 
   strong {
+    overflow: hidden;
     font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .json-panel {
+  display: grid;
+  gap: 12px;
   margin-top: 22px;
+  padding: 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
 
-  pre {
-    max-height: 340px;
+.json-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+
+  > div {
+    min-width: 0;
+  }
+
+  h2 {
+    overflow: hidden;
     margin: 0;
-    overflow: auto;
-    padding: 12px;
-    border: 1px solid #dbe3ef;
-    border-radius: 8px;
-    background: #0f172a;
-    color: #dbeafe;
+    color: #0f172a;
+    font-size: 15px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  p {
+    overflow: hidden;
+    margin: 4px 0 0;
+    color: #64748b;
     font-size: 12px;
-    line-height: 1.5;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  > span {
+    flex: 0 0 auto;
+    max-width: 104px;
+    overflow: hidden;
+    padding: 4px 8px;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .json-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  min-width: 0;
+}
+
+.json-action {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.18s, border-color 0.18s, box-shadow 0.18s, color 0.18s;
+
+  span,
+  small {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span {
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  small {
+    color: #64748b;
+    font-size: 11px;
+  }
+
+  &:hover {
+    border-color: #93c5fd;
+    background: #eff6ff;
+    color: #1d4ed8;
+    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.1);
+  }
+}
+
+.json-action--primary {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.json-preview {
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.json-preview__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.92);
+
+  span,
+  strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span {
+    color: #dbeafe;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  strong {
+    flex: 0 0 auto;
+    color: #93c5fd;
+    font-size: 11px;
+  }
+}
+
+.json-preview pre {
+  max-height: 300px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  color: #dbeafe;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .hidden-input {
@@ -1534,10 +2567,14 @@ onBeforeUnmount(() => {
 }
 
 .text-button {
+  min-width: 0;
+  overflow: hidden;
   border: 0;
   background: transparent;
   color: #2563eb;
   cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 
   &:hover {
     color: #1d4ed8;
@@ -1558,6 +2595,8 @@ onBeforeUnmount(() => {
   right: 24px;
   bottom: 24px;
   z-index: 10;
+  max-width: min(360px, calc(100vw - 32px));
+  overflow-wrap: anywhere;
   padding: 10px 14px;
   border: 1px solid #bfdbfe;
   border-radius: 8px;
@@ -1579,12 +2618,48 @@ onBeforeUnmount(() => {
 
 .template-modal {
   width: min(760px, calc(100vw - 48px));
+  min-width: 0;
   max-height: calc(100vh - 48px);
   overflow: auto;
   border: 1px solid #dbe3ef;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.next-step-modal {
+  width: min(680px, calc(100vw - 48px));
+}
+
+.next-step-modal__body {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.next-step-modal__list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+
+  strong {
+    color: #334155;
+    font-size: 13px;
+  }
+
+  span {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+  }
+}
+
+.next-step-modal__footer {
+  padding: 0 18px 18px;
 }
 
 .template-modal__header,
@@ -1594,20 +2669,31 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   padding: 16px 18px;
+
+  > div {
+    min-width: 0;
+  }
 }
 
 .template-modal__header {
   border-bottom: 1px solid #e2e8f0;
 
   h2 {
+    overflow: hidden;
     margin: 0;
     font-size: 17px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   p {
+    display: -webkit-box;
+    overflow: hidden;
     margin: 5px 0 0;
     color: #64748b;
     font-size: 12px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 }
 
@@ -1700,6 +2786,107 @@ onBeforeUnmount(() => {
     background: #ffffff;
     color: #0f172a;
     box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  }
+}
+
+@media (max-width: 1040px) {
+  .designer-page {
+    overflow: auto;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 16px;
+  }
+
+  .topbar__actions {
+    max-width: 360px;
+  }
+
+  .topbar__actions .button {
+    padding: 0 10px;
+  }
+
+  .designer-shell {
+    grid-template-columns: 220px minmax(320px, 1fr) 280px;
+  }
+
+  .device-panel,
+  .inspector-panel {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 860px) {
+  .designer-page {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    display: grid;
+  }
+
+  .topbar__actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .designer-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .device-panel,
+  .inspector-panel {
+    max-height: 360px;
+    border: 0;
+    border-bottom: 1px solid #dbe3ef;
+  }
+
+  .canvas-shell {
+    min-height: 520px;
+  }
+
+  .canvas-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .canvas-toolbar__hint {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .topbar h1 {
+    font-size: 18px;
+  }
+
+  .template-form__grid,
+  .node-animation-grid,
+  .node-status-rule-grid,
+  .node-next-row,
+  .next-step-actions,
+  .next-step-row,
+  .json-actions,
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .next-branch-summary-card {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .template-modal,
+  .next-step-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
   }
 }
 </style>

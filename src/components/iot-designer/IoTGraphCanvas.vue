@@ -57,18 +57,34 @@
         @pointerdown.stop.prevent="startControlPointDrag($event, handle.index)"
       />
       <circle
-        v-if="pipelineTokenOverlay"
+        v-for="token in pipelineTokenOverlays"
+        :key="`pipeline-glow-${token.id}`"
         class="pipeline-token-glow"
-        :cx="pipelineTokenOverlay[0]"
-        :cy="pipelineTokenOverlay[1]"
+        :cx="token.x"
+        :cy="token.y"
         r="12"
       />
       <circle
-        v-if="pipelineTokenOverlay"
+        v-for="token in pipelineTokenOverlays"
+        :key="`pipeline-token-${token.id}`"
         class="pipeline-token"
-        :cx="pipelineTokenOverlay[0]"
-        :cy="pipelineTokenOverlay[1]"
+        :cx="token.x"
+        :cy="token.y"
         r="6"
+      />
+      <rect
+        v-for="halo in statusAnimationOverlays"
+        :key="`status-animation-${halo.id}`"
+        class="status-animation-overlay"
+        :class="`status-animation-overlay--${halo.effect}`"
+        :x="halo.x"
+        :y="halo.y"
+        :width="halo.width"
+        :height="halo.height"
+        rx="16"
+        ry="16"
+        :stroke="halo.stroke"
+        :style="{ animationDuration: `${halo.speedMs}ms` }"
       />
     </svg>
     <div class="canvas-status" aria-live="polite">
@@ -106,10 +122,15 @@ import type {
   CanvasMode,
   DesignerGraphData,
   DeviceIconKind,
+  DeviceIconConfig,
+  DeviceNextStep,
   DeviceLink,
   DeviceNode,
   DeviceStatus,
   DeviceTemplate,
+  NodeAnimationConfig,
+  NodeAnimationEffect,
+  NodeAnimationTrigger,
   RoutePoint,
   StatusPayload,
 } from '@/types/iot-designer';
@@ -124,6 +145,7 @@ const emit = defineEmits<{
   (event: 'node-select', node: DeviceNode | null): void;
   (event: 'edge-select', edge: DeviceLink | null): void;
   (event: 'data-change', data: DesignerGraphData): void;
+  (event: 'arrival-status-change', updates: Array<{ id: string; status: DeviceStatus }>): void;
 }>();
 
 const canvasRef = ref<HTMLDivElement>();
@@ -156,17 +178,19 @@ interface PipelineSegment {
   totalLength: number;
 }
 interface PipelineRuntime {
-  segments: PipelineSegment[];
-  segmentIndex: number;
-  segmentDistance: number;
+  segments: PipelineActiveSegment[];
   running: boolean;
   paused: boolean;
   finished: boolean;
-  holdUntil: number;
-  lastTimestamp: number;
   phaseMap: Record<string, PipelinePhase>;
-  pendingDoneNodeId: string | null;
   activeNodeId: string;
+  waiting: boolean;
+  autoAdvance: boolean;
+}
+interface PipelineActiveSegment extends PipelineSegment {
+  distance: number;
+  lastTimestamp: number;
+  arrivalStatus?: DeviceStatus;
 }
 const nodeResizeBox = ref<{ x: number; y: number; width: number; height: number } | null>(null);
 const nodeResizeHandles = ref<Array<{ corner: NodeResizeCorner; x: number; y: number }>>([]);
@@ -177,12 +201,21 @@ const draggingNodeResize = ref<{
   startBounds: { x: number; y: number; width: number; height: number };
   nextNode: DeviceNode;
 } | null>(null);
-const pipelineTokenOverlay = ref<Point | null>(null);
+const pipelineTokenOverlays = ref<Array<{ id: string; x: number; y: number }>>([]);
+const statusAnimationOverlays = ref<Array<{
+  id: string;
+  effect: NodeAnimationEffect;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  stroke: string;
+  speedMs: number;
+}>>([]);
 const pipelineStatusText = ref('流水线未启动');
 let pipelineRuntime: PipelineRuntime | null = null;
 let pipelineFrame = 0;
 const pipelineSpeed = 240;
-const pipelineHoldMs = 180;
 
 const zoomPercent = computed(() => `${Math.round(currentZoom.value * 100)}%`);
 const zoomRangeLabel = computed(() => `${Math.round(zoomRange[0] * 100)}%-${Math.round(zoomRange[1] * 100)}%`);
@@ -240,6 +273,13 @@ interface IoTDeviceNodeStyle extends RectStyleProps {
   deviceIconImageUrl?: string;
   status?: DeviceStatus;
   pipelinePhase?: PipelinePhase;
+  animationEffect?: NodeAnimationEffect;
+  animationTrigger?: NodeAnimationTrigger;
+  animationStatuses?: DeviceStatus[];
+  animationSpeedMs?: number;
+  animationWaitForStatus?: DeviceStatus;
+  animationActive?: boolean;
+  statusIconRules?: Array<{ status: DeviceStatus; kind: DeviceIconKind; text?: string; svg?: string; imageUrl?: string }>;
 }
 
 class IoTDeviceNode extends Rect {
@@ -253,20 +293,26 @@ class IoTDeviceNode extends Rect {
     const height = Number(attributes.height || 74);
     const status = (attributes.status || 'offline') as DeviceStatus;
     const palette = statusPalette[status];
-    const icon = String(attributes.deviceIcon || 'Device');
-    const iconKind = (attributes.deviceIconKind || 'text') as DeviceIconKind;
+    const ruleIconConfig = getStatusRuleIconConfig(status, attributes.statusIconRules);
+    const icon = ruleIconConfig?.text || String(attributes.deviceIcon || 'Device');
+    const iconKind = ruleIconConfig?.kind || ((attributes.deviceIconKind || 'text') as DeviceIconKind);
     const iconImageSource = getDeviceIconImageSource(
       iconKind,
-      String(attributes.deviceIconSvg || ''),
-      String(attributes.deviceIconImageUrl || ''),
+      ruleIconConfig?.svg || String(attributes.deviceIconSvg || ''),
+      ruleIconConfig?.imageUrl || String(attributes.deviceIconImageUrl || ''),
     );
     const pipelinePhase = (attributes.pipelinePhase || 'idle') as PipelinePhase;
+    const animationEffect = (attributes.animationEffect || 'none') as NodeAnimationEffect;
+    const animationSpeedMs = normalizeAnimationSpeed(attributes.animationSpeedMs);
+    const animationActive = Boolean(attributes.animationActive);
     const iconWidth = Math.max(18, width);
     const iconHeight = Math.max(18, height);
     const iconSize = Math.min(iconWidth, iconHeight);
     const iconCenterY = 0;
     const statusIconSize = Math.max(14, Math.min(20, iconSize * 0.22));
     const statusIconSource = getStatusIconSource(status, pipelinePhase);
+    const statusAnimationStroke = animationActive ? palette.badge : 'transparent';
+    const statusAnimationPadding = animationEffect === 'shake' ? 8 : 10;
 
     this.upsert(
       'pipeline-halo',
@@ -282,6 +328,22 @@ class IoTDeviceNode extends Rect {
         lineWidth: pipelinePhase === 'idle' ? 0 : 2,
         lineDash: pipelinePhase === 'active' ? [6, 4] : [],
         opacity: pipelinePhase === 'idle' ? 0 : 0.85,
+      },
+      container,
+    );
+    this.upsert(
+      'status-animation-ring',
+      GRect,
+      {
+        x: -width / 2 - statusAnimationPadding,
+        y: -height / 2 - statusAnimationPadding,
+        width: width + statusAnimationPadding * 2,
+        height: height + statusAnimationPadding * 2,
+        radius: 16,
+        fill: 'transparent',
+        stroke: statusAnimationStroke,
+        lineWidth: 0,
+        opacity: 0,
       },
       container,
     );
@@ -387,6 +449,25 @@ class IoTDeviceNode extends Rect {
       },
       container,
     );
+    this.applyNodeAnimation(container, animationEffect, animationActive, animationSpeedMs);
+  }
+
+  private applyNodeAnimation(container: Group, effect: NodeAnimationEffect, active: boolean, speedMs: number) {
+    const targets = [container.getElementById('status-animation-ring')].filter(Boolean) as Array<{
+      animate?: (frames: object[], options: object) => unknown;
+      getAnimations?: () => Array<{ cancel: () => void }>;
+    }>;
+
+    targets.forEach((target) => target.getAnimations?.().forEach((animation) => animation.cancel()));
+    if (!active || effect === 'none') return;
+
+    const frames = getNodeAnimationFrames(effect);
+    if (!frames.length) return;
+    targets.forEach((target) => target.animate?.(frames, {
+      duration: speedMs,
+      iterations: Infinity,
+      easing: 'ease-in-out',
+    }));
   }
 }
 
@@ -415,12 +496,6 @@ function getStatusIconSource(status: DeviceStatus, pipelinePhase: PipelinePhase 
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="#0ea5e9"/><path d="M10 8.5 16.5 12 10 15.5Z" fill="#fff"/></svg>',
     );
   }
-  if (pipelinePhase === 'done') {
-    const badge = statusPalette[status]?.badge || '#22c55e';
-    return svgToDataUrl(
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="${badge}"/><path d="m7.8 12.3 2.8 2.8 5.8-6.1" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    );
-  }
   return svgToDataUrl(statusIconSvg(status));
 }
 
@@ -428,6 +503,102 @@ function getDeviceIconImageSource(kind: DeviceIconKind, svg: string, imageUrl: s
   if (kind === 'svg') return svgToDataUrl(svg);
   if (kind === 'image') return imageUrl.trim();
   return '';
+}
+
+function getStatusRuleIconConfig(status: DeviceStatus, rules: IoTDeviceNodeStyle['statusIconRules']) {
+  return rules?.find((rule) => rule.status === status);
+}
+
+function normalizeAnimationSpeed(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1200;
+  return Math.max(300, Math.min(5000, Math.round(numeric)));
+}
+
+function getNodeAnimationFrames(effect: NodeAnimationEffect) {
+  if (effect === 'pulse') {
+    return [
+      { opacity: 0.32, lineWidth: 2 },
+      { opacity: 0.95, lineWidth: 5 },
+      { opacity: 0.32, lineWidth: 2 },
+    ];
+  }
+  if (effect === 'blink') {
+    return [
+      { opacity: 1 },
+      { opacity: 0.35 },
+      { opacity: 1 },
+    ];
+  }
+  if (effect === 'spin') {
+    return [
+      { lineDashOffset: 0 },
+      { lineDashOffset: -28 },
+    ];
+  }
+  if (effect === 'shake') {
+    return [
+      { x: -6 },
+      { x: 6 },
+      { x: -4 },
+      { x: 4 },
+      { x: 0 },
+    ];
+  }
+  return [];
+}
+
+function getDefaultAnimationConfig(animation?: NodeAnimationConfig): Required<NodeAnimationConfig> {
+  return {
+    effect: animation?.effect || 'none',
+    trigger: animation?.trigger || 'always',
+    statuses: animation?.statuses?.length ? animation.statuses : ['warning'],
+    speedMs: normalizeAnimationSpeed(animation?.speedMs),
+    waitForStatus: animation?.waitForStatus || 'online',
+    statusIconRules: animation?.statusIconRules || [],
+  };
+}
+
+function shouldRunNodeAnimation(node: DeviceNode) {
+  const animation = getDefaultAnimationConfig(node.animation);
+  if (animation.effect === 'none') return false;
+  if (animation.trigger === 'always') return true;
+  if (animation.trigger === 'byStatus') return animation.statuses.includes(node.status);
+  return node.status !== animation.waitForStatus;
+}
+
+function getStatusIconRulesForStyle(animation?: NodeAnimationConfig) {
+  return (animation?.statusIconRules || []).map((rule) => ({
+    status: rule.status,
+    kind: rule.iconConfig.kind,
+    text: rule.iconConfig.text || '',
+    svg: rule.iconConfig.svg || '',
+    imageUrl: rule.iconConfig.imageUrl || '',
+  }));
+}
+
+function mergeNodeStatusPayload(node: DeviceNode | undefined, payload: StatusPayload): DeviceNode {
+  const status = payload.status || node?.status || 'offline';
+  const animation = payload.animation
+    ? getDefaultAnimationConfig({
+        ...node?.animation,
+        ...payload.animation,
+      } as NodeAnimationConfig)
+    : node?.animation;
+  return {
+    ...(node || {
+      id: payload.id,
+      type: 'device',
+      name: payload.id,
+      x: 0,
+      y: 0,
+      icon: payload.id.slice(0, 2),
+    }),
+    status,
+    metrics: payload.metrics || node?.metrics,
+    iconConfig: payload.iconConfig || node?.iconConfig,
+    animation,
+  };
 }
 
 function normalizeNodeIconConfig(node: DeviceNode) {
@@ -557,6 +728,7 @@ function getEdgePathPoints(edge: DeviceLink, nodes: DeviceNode[] = props.data.no
 function toG6Node(node: DeviceNode): NodeData {
   const palette = statusPalette[node.status];
   const iconConfig = normalizeNodeIconConfig(node);
+  const animationConfig = getDefaultAnimationConfig(node.animation);
   const width = normalizeNodeSize(node.width, defaultNodeSize.width, nodeSizeBounds.minWidth, nodeSizeBounds.maxWidth);
   const height = normalizeNodeSize(node.height, defaultNodeSize.height, nodeSizeBounds.minHeight, nodeSizeBounds.maxHeight);
   return {
@@ -597,6 +769,13 @@ function toG6Node(node: DeviceNode): NodeData {
       deviceIconImageUrl: iconConfig.imageUrl,
       status: node.status,
       pipelinePhase: 'idle',
+      animationEffect: animationConfig.effect,
+      animationTrigger: animationConfig.trigger,
+      animationStatuses: animationConfig.statuses,
+      animationSpeedMs: animationConfig.speedMs,
+      animationWaitForStatus: animationConfig.waitForStatus,
+      animationActive: shouldRunNodeAnimation(node),
+      statusIconRules: getStatusIconRulesForStyle(node.animation),
     },
   };
 }
@@ -650,6 +829,7 @@ async function renderGraph() {
   refreshEdgeControlHandles();
   refreshNodeResizeHandles();
   refreshPipelineTokenOverlay();
+  refreshStatusAnimationOverlays();
 }
 
 function queueRenderGraph() {
@@ -680,6 +860,7 @@ function refreshViewportOverlay() {
   refreshEdgeControlHandles();
   refreshNodeResizeHandles();
   refreshPipelineTokenOverlay();
+  refreshStatusAnimationOverlays();
 }
 
 function scheduleViewportOverlayRefresh() {
@@ -733,38 +914,6 @@ function getPointAtDistance(points: Point[], lengths: number[], distance: number
   return points[points.length - 1];
 }
 
-function buildPipelineSegments(startNodeId: string) {
-  const segments: PipelineSegment[] = [];
-  const phaseMap: Record<string, PipelinePhase> = {};
-  const visitedNodes = new Set<string>();
-  const visitedEdges = new Set<string>();
-  let currentNodeId = startNodeId;
-
-  while (currentNodeId && !visitedNodes.has(currentNodeId)) {
-    visitedNodes.add(currentNodeId);
-    const edge = props.data.edges.find((item) => item.source === currentNodeId && !visitedEdges.has(item.id));
-    if (!edge) break;
-    visitedEdges.add(edge.id);
-    const points = getEdgePathPoints(edge);
-    if (points.length < 2) break;
-    const metrics = getPolylineMetrics(points);
-    if (metrics.totalLength <= 0) break;
-    segments.push({
-      edgeId: edge.id,
-      sourceId: edge.source,
-      targetId: edge.target,
-      points,
-      lengths: metrics.lengths,
-      totalLength: metrics.totalLength,
-    });
-    phaseMap[edge.source] = 'idle';
-    phaseMap[edge.target] = 'idle';
-    currentNodeId = edge.target;
-  }
-
-  return { segments, phaseMap };
-}
-
 function getPipelineStartNodeId() {
   if (selectedNodeId.value) return selectedNodeId.value;
   const selectedEdge = props.data.edges.find((edge) => edge.id === selectedEdgeId.value);
@@ -773,24 +922,51 @@ function getPipelineStartNodeId() {
 }
 
 function refreshPipelineTokenOverlay() {
-  if (!pipelineRuntime?.segments.length) {
-    pipelineTokenOverlay.value = null;
+  if (!pipelineRuntime) {
+    pipelineTokenOverlays.value = [];
     return;
   }
-  const segment = pipelineRuntime.segments[pipelineRuntime.segmentIndex];
-  if (!segment) {
-    const lastSegment = pipelineRuntime.segments[pipelineRuntime.segments.length - 1];
-    pipelineTokenOverlay.value = getOverlayPointFromCanvas(lastSegment.points[lastSegment.points.length - 1]);
+  if (!pipelineRuntime.segments.length) {
+    const point = getOverlayPointFromCanvas(getNodePosition(pipelineRuntime.activeNodeId));
+    pipelineTokenOverlays.value = point ? [{ id: pipelineRuntime.activeNodeId, x: point[0], y: point[1] }] : [];
     return;
   }
-  const tokenPoint = getPointAtDistance(segment.points, segment.lengths, pipelineRuntime.segmentDistance);
-  pipelineTokenOverlay.value = getOverlayPointFromCanvas(tokenPoint);
+  pipelineTokenOverlays.value = pipelineRuntime.segments
+    .map((segment) => {
+      const tokenPoint = getPointAtDistance(segment.points, segment.lengths, segment.distance);
+      const overlayPoint = getOverlayPointFromCanvas(tokenPoint);
+      return overlayPoint ? { id: segment.edgeId, x: overlayPoint[0], y: overlayPoint[1] } : null;
+    })
+    .filter(Boolean) as Array<{ id: string; x: number; y: number }>;
+}
+
+function refreshStatusAnimationOverlays() {
+  statusAnimationOverlays.value = props.data.nodes
+    .filter((node) => shouldRunNodeAnimation(node))
+    .map((node) => {
+      const bounds = getNodeBounds(node.id);
+      const topLeft = getOverlayPointFromCanvas([bounds.x - bounds.width / 2 - 10, bounds.y - bounds.height / 2 - 10]);
+      const bottomRight = getOverlayPointFromCanvas([bounds.x + bounds.width / 2 + 10, bounds.y + bounds.height / 2 + 10]);
+      if (!topLeft || !bottomRight) return null;
+      const animation = getDefaultAnimationConfig(node.animation);
+      return {
+        id: node.id,
+        effect: animation.effect,
+        x: topLeft[0],
+        y: topLeft[1],
+        width: bottomRight[0] - topLeft[0],
+        height: bottomRight[1] - topLeft[1],
+        stroke: statusPalette[node.status].badge,
+        speedMs: animation.speedMs,
+      };
+    })
+    .filter(Boolean) as typeof statusAnimationOverlays.value;
 }
 
 function applyPipelineRenderState() {
   const graph = graphRef.value;
   if (!graph || !pipelineRuntime) {
-    pipelineTokenOverlay.value = null;
+    pipelineTokenOverlays.value = [];
     return;
   }
   const updates = Object.entries(pipelineRuntime.phaseMap)
@@ -834,43 +1010,32 @@ function stopPipelinePlayback(keepToken = false) {
   }
   pipelineRuntime = null;
   if (!keepToken) {
-    pipelineTokenOverlay.value = null;
+    pipelineTokenOverlays.value = [];
   }
   pipelineStatusText.value = '流水线未启动';
 }
 
-function startPipelinePlayback() {
+function startPipelinePlayback(autoAdvance = true) {
   const startNodeId = getPipelineStartNodeId();
   if (!startNodeId) {
     pipelineStatusText.value = '流水线未启动';
     return;
   }
-  const { segments, phaseMap } = buildPipelineSegments(startNodeId);
-  if (!segments.length) {
-    pipelineStatusText.value = '流水线未启动';
-    return;
-  }
   stopPipelinePlayback();
   pipelineRuntime = {
-    segments,
-    segmentIndex: 0,
-    segmentDistance: 0,
+    segments: [],
     running: true,
     paused: false,
     finished: false,
-    holdUntil: 0,
-    lastTimestamp: 0,
-    phaseMap: {
-      ...phaseMap,
-      [startNodeId]: 'active',
-    },
-    pendingDoneNodeId: null,
+    phaseMap: { [startNodeId]: 'active' },
     activeNodeId: startNodeId,
+    waiting: true,
+    autoAdvance,
   };
   const startNode = props.data.nodes.find((node) => node.id === startNodeId);
-  pipelineStatusText.value = `流水线运行中${startNode?.name ? ` · ${startNode.name}` : ''}`;
+  pipelineStatusText.value = `等待下一节点${startNode?.name ? ` · ${startNode.name}` : ''}`;
   applyPipelineRenderState();
-  schedulePipelineFrame();
+  if (autoAdvance) advanceConfiguredNextNode();
 }
 
 function pausePipelinePlayback() {
@@ -884,10 +1049,14 @@ function resumePipelinePlayback() {
   const runtime = pipelineRuntime;
   if (!runtime || !runtime.paused || runtime.finished) return;
   runtime.paused = false;
-  runtime.lastTimestamp = 0;
+  runtime.segments.forEach((segment) => {
+    segment.lastTimestamp = 0;
+  });
   const currentNode = props.data.nodes.find((node) => node.id === runtime.activeNodeId);
-  pipelineStatusText.value = `流水线运行中${currentNode?.name ? ` · ${currentNode.name}` : ''}`;
-  schedulePipelineFrame();
+  pipelineStatusText.value = runtime.segments.length
+    ? `流水线运行中${currentNode?.name ? ` · ${currentNode.name}` : ''}`
+    : `等待下一节点${currentNode?.name ? ` · ${currentNode.name}` : ''}`;
+  if (runtime.segments.length) schedulePipelineFrame();
 }
 
 function togglePipelinePlayback() {
@@ -907,74 +1076,167 @@ function finishPipelinePlayback() {
   pipelineRuntime.running = false;
   pipelineRuntime.paused = false;
   pipelineRuntime.finished = true;
-  pipelineRuntime.pendingDoneNodeId = null;
   pipelineStatusText.value = '流水线已完成';
   cancelPipelineFrame();
   refreshPipelineTokenOverlay();
 }
 
-function updatePipelinePhaseAfterSegment(segmentIndex: number) {
-  if (!pipelineRuntime) return;
-  const segment = pipelineRuntime.segments[segmentIndex];
-  if (!segment) return;
-  pipelineRuntime.phaseMap[segment.sourceId] = 'done';
-  pipelineRuntime.phaseMap[segment.targetId] = 'active';
-  pipelineRuntime.activeNodeId = segment.targetId;
-  pipelineRuntime.pendingDoneNodeId = segment.targetId;
+function getPipelineSegment(sourceId: string, targetId: string): PipelineSegment | null {
+  const edge = props.data.edges.find((item) => item.source === sourceId && item.target === targetId);
+  if (!edge) return null;
+  const points = getEdgePathPoints(edge);
+  if (points.length < 2) return null;
+  const metrics = getPolylineMetrics(points);
+  if (metrics.totalLength <= 0) return null;
+  return {
+    edgeId: edge.id,
+    sourceId: edge.source,
+    targetId: edge.target,
+    points,
+    lengths: metrics.lengths,
+    totalLength: metrics.totalLength,
+  };
+}
+
+function advancePipelineToNode(nextNodeId: string) {
+  advancePipelineToNodes([nextNodeId]);
+}
+
+function advancePipelineToNodeWithStatus(nextNodeId: string, arrivalStatus?: DeviceStatus) {
+  advancePipelineToNodes([nextNodeId], arrivalStatus);
+}
+
+function advancePipelineWithSteps(steps: DeviceNextStep[]) {
+  const arrivalStatusByTarget = new Map(steps.map((step) => [step.targetId, step.arrivalStatus]));
+  advancePipelineToNodes(steps.map((step) => step.targetId), undefined, arrivalStatusByTarget);
+}
+
+function advancePipelineToNodes(nextNodeIds: string[], arrivalStatus?: DeviceStatus, arrivalStatusByTarget = new Map<string, DeviceStatus>()) {
+  const runtime = pipelineRuntime;
+  if (!runtime || runtime.paused || runtime.finished || !runtime.running) return;
+  if (runtime.segments.length) return;
+  const segments = Array.from(new Set(nextNodeIds))
+    .filter((nextNodeId) => nextNodeId && nextNodeId !== runtime.activeNodeId)
+    .map((nextNodeId) => getPipelineSegment(runtime.activeNodeId, nextNodeId))
+    .filter(Boolean) as PipelineSegment[];
+  if (!segments.length) {
+    pipelineStatusText.value = `没有可达链路 · ${runtime.activeNodeId}`;
+    return;
+  }
+  runtime.segments = segments.map((segment) => ({
+    ...segment,
+    distance: 0,
+    lastTimestamp: 0,
+    arrivalStatus: arrivalStatusByTarget.get(segment.targetId) || arrivalStatus,
+  }));
+  runtime.waiting = false;
+  runtime.phaseMap[runtime.activeNodeId] = 'done';
+  segments.forEach((segment) => {
+    runtime.phaseMap[segment.targetId] = 'active';
+  });
+  pipelineStatusText.value = `流水线运行中 · ${segments.length} 条分支`;
   applyPipelineRenderState();
+  schedulePipelineFrame();
+}
+
+function getConfiguredNextSteps(nodeId: string): DeviceNextStep[] {
+  const node = props.data.nodes.find((item) => item.id === nodeId);
+  if (!node) return [];
+  const reachableTargetIds = new Set(props.data.edges.filter((edge) => edge.source === nodeId).map((edge) => edge.target));
+  const configuredSteps = (node.nextSteps || [])
+    .filter((step) => step.targetId && reachableTargetIds.has(step.targetId))
+    .map((step) => ({
+      targetId: step.targetId,
+      arrivalStatus: step.arrivalStatus || 'online',
+    }));
+  if (configuredSteps.length) return configuredSteps;
+  if (node.nextNodeId && reachableTargetIds.has(node.nextNodeId)) {
+    return [{ targetId: node.nextNodeId, arrivalStatus: node.nextNodeArrivalStatus || 'online' }];
+  }
+  return [];
+}
+
+function advanceConfiguredNextNode() {
+  const runtime = pipelineRuntime;
+  if (!runtime || !runtime.autoAdvance || runtime.paused || runtime.finished || runtime.segments.length) return;
+  const steps = getConfiguredNextSteps(runtime.activeNodeId);
+  if (!steps.length) return;
+  advancePipelineWithSteps(steps);
 }
 
 function tickPipeline(timestamp: number) {
   pipelineFrame = 0;
   const runtime = pipelineRuntime;
   if (!runtime || runtime.paused || runtime.finished || !runtime.running) return;
-  if (!runtime.segments.length) {
-    finishPipelinePlayback();
-    return;
-  }
-  if (runtime.lastTimestamp === 0) {
-    runtime.lastTimestamp = timestamp;
-  }
-  if (runtime.pendingDoneNodeId && runtime.holdUntil && timestamp >= runtime.holdUntil) {
-    runtime.phaseMap[runtime.pendingDoneNodeId] = 'done';
-    runtime.pendingDoneNodeId = null;
-    runtime.holdUntil = 0;
-    runtime.lastTimestamp = timestamp;
-    applyPipelineRenderState();
-  }
-  if (runtime.pendingDoneNodeId) {
-    schedulePipelineFrame();
-    return;
-  }
-  const segment = runtime.segments[runtime.segmentIndex];
-  if (!segment) {
-    finishPipelinePlayback();
-    return;
-  }
-  const delta = timestamp - runtime.lastTimestamp;
-  runtime.lastTimestamp = timestamp;
-  runtime.segmentDistance = Math.min(segment.totalLength, runtime.segmentDistance + (delta * pipelineSpeed) / 1000);
-  const tokenPoint = getPointAtDistance(segment.points, segment.lengths, runtime.segmentDistance);
-  pipelineTokenOverlay.value = getOverlayPointFromCanvas(tokenPoint);
-  if (runtime.segmentDistance >= segment.totalLength - 0.5) {
-    runtime.segmentDistance = segment.totalLength;
-    updatePipelinePhaseAfterSegment(runtime.segmentIndex);
-    runtime.segmentIndex += 1;
-    if (runtime.segmentIndex >= runtime.segments.length) {
-      finishPipelinePlayback();
-      return;
+  if (!runtime.segments.length) return;
+  runtime.segments.forEach((segment) => {
+    if (segment.lastTimestamp === 0) {
+      segment.lastTimestamp = timestamp;
     }
-    runtime.segmentDistance = 0;
-    runtime.holdUntil = timestamp + pipelineHoldMs;
-    runtime.lastTimestamp = timestamp;
-    schedulePipelineFrame();
+    const delta = timestamp - segment.lastTimestamp;
+    segment.lastTimestamp = timestamp;
+    segment.distance = Math.min(segment.totalLength, segment.distance + (delta * pipelineSpeed) / 1000);
+  });
+  refreshPipelineTokenOverlay();
+  if (runtime.segments.every((segment) => segment.distance >= segment.totalLength - 0.5)) {
+    const completedSegments = [...runtime.segments];
+    runtime.activeNodeId = completedSegments[0].targetId;
+    completedSegments.forEach((segment) => {
+      runtime.phaseMap[segment.targetId] = 'done';
+    });
+    runtime.segments = [];
+    runtime.waiting = true;
+    applyArrivalStatuses(completedSegments);
+    const currentNode = props.data.nodes.find((node) => node.id === runtime.activeNodeId);
+    pipelineStatusText.value = completedSegments.length > 1
+      ? `多分支已到达 · ${completedSegments.length} 个节点`
+      : `等待下一节点${currentNode?.name ? ` · ${currentNode.name}` : ''}`;
+    applyPipelineRenderState();
+    if (completedSegments.length === 1) advanceConfiguredNextNode();
     return;
   }
   schedulePipelineFrame();
 }
 
+function applyArrivalStatuses(segments: PipelineActiveSegment[]) {
+  const updates = segments
+    .filter((segment): segment is PipelineActiveSegment & { arrivalStatus: DeviceStatus } => Boolean(segment.arrivalStatus))
+    .map((segment) => ({ id: segment.targetId, status: segment.arrivalStatus }));
+  if (!updates.length) return;
+  const graph = graphRef.value;
+  if (graph) {
+    graph.updateNodeData(
+      updates.map((update) => {
+        const current = props.data.nodes.find((node) => node.id === update.id);
+        const nextNode = current ? { ...current, status: update.status } : undefined;
+        const animationConfig = getDefaultAnimationConfig(nextNode?.animation);
+        return {
+          id: update.id,
+          states: [update.status],
+          data: nextNode
+            ? {
+                device: nextNode,
+              }
+            : undefined,
+          style: {
+            status: update.status,
+            animationActive: nextNode ? shouldRunNodeAnimation(nextNode) : false,
+            animationEffect: animationConfig.effect,
+            animationTrigger: animationConfig.trigger,
+            animationStatuses: animationConfig.statuses,
+            animationSpeedMs: animationConfig.speedMs,
+            animationWaitForStatus: animationConfig.waitForStatus,
+            statusIconRules: getStatusIconRulesForStyle(nextNode?.animation),
+          },
+        };
+      }),
+    );
+  }
+  emit('arrival-status-change', updates);
+}
+
 function schedulePipelineFrame() {
-  if (pipelineFrame || !pipelineRuntime || pipelineRuntime.paused || pipelineRuntime.finished || !pipelineRuntime.running) return;
+  if (pipelineFrame || !pipelineRuntime?.segments.length || pipelineRuntime.paused || pipelineRuntime.finished || !pipelineRuntime.running) return;
   pipelineFrame = window.requestAnimationFrame(tickPipeline);
 }
 
@@ -1732,33 +1994,53 @@ function updateStatuses(payloads: StatusPayload[]) {
   graph.updateNodeData(
     payloads.map((payload) => {
       const current = props.data.nodes.find((node) => node.id === payload.id);
-      const status = payload.status || current?.status || 'offline';
-      const palette = statusPalette[status];
+      const nextNode = mergeNodeStatusPayload(current, payload);
+      const palette = statusPalette[nextNode.status];
+      const iconConfig = normalizeNodeIconConfig(nextNode);
+      const animationConfig = getDefaultAnimationConfig(nextNode.animation);
       return {
         id: payload.id,
-        states: [status],
+        states: [nextNode.status],
         data: {
-          device: {
-            ...current,
-            status,
-            metrics: payload.metrics || current?.metrics,
-          },
+          device: nextNode,
         },
         style: {
           fill: palette.fill,
           stroke: palette.stroke,
-          status,
+          deviceIcon: iconConfig.text,
+          deviceIconKind: iconConfig.kind,
+          deviceIconSvg: iconConfig.svg,
+          deviceIconImageUrl: iconConfig.imageUrl,
+          status: nextNode.status,
+          animationEffect: animationConfig.effect,
+          animationTrigger: animationConfig.trigger,
+          animationStatuses: animationConfig.statuses,
+          animationSpeedMs: animationConfig.speedMs,
+          animationWaitForStatus: animationConfig.waitForStatus,
+          animationActive: shouldRunNodeAnimation(nextNode),
+          statusIconRules: getStatusIconRulesForStyle(nextNode.animation),
         },
       };
     }),
   );
   graph.draw();
   void applyStatusStates();
+  refreshStatusAnimationOverlays();
+  const activeNodeId = pipelineRuntime?.activeNodeId;
+  const nextPayload = activeNodeId ? payloads.find((payload) => payload.id === activeNodeId && payload.nextNodeId) : undefined;
+  if (nextPayload?.nextNodeId) {
+    if (pipelineRuntime) pipelineRuntime.autoAdvance = false;
+    advancePipelineToNode(nextPayload.nextNodeId);
+  }
 }
 
 defineExpose({
   updateStatuses,
   startPipelinePlayback,
+  advancePipelineToNode,
+  advancePipelineToNodes,
+  advancePipelineToNodeWithStatus,
+  advancePipelineWithSteps,
   togglePipelinePlayback,
   resetPipelinePlayback: () => stopPipelinePlayback(),
   fitView: async () => {
@@ -1986,6 +2268,91 @@ onBeforeUnmount(() => {
   stroke-width: 2;
   filter: drop-shadow(0 6px 14px rgba(14, 165, 233, 0.28));
   pointer-events: none;
+}
+
+.status-animation-overlay {
+  fill: transparent;
+  stroke-width: 3;
+  pointer-events: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  filter: drop-shadow(0 6px 14px rgba(245, 158, 11, 0.22));
+}
+
+.status-animation-overlay--pulse {
+  animation: node-status-pulse 1200ms ease-in-out infinite;
+}
+
+.status-animation-overlay--blink {
+  animation: node-status-blink 900ms ease-in-out infinite;
+}
+
+.status-animation-overlay--spin {
+  stroke-dasharray: 12 8;
+  animation: node-status-flow 1200ms linear infinite;
+}
+
+.status-animation-overlay--shake {
+  animation: node-status-shake 700ms ease-in-out infinite;
+}
+
+@keyframes node-status-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    stroke-width: 2;
+    transform: scale(0.98);
+  }
+
+  50% {
+    opacity: 1;
+    stroke-width: 5;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes node-status-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.18;
+  }
+}
+
+@keyframes node-status-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+
+@keyframes node-status-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  20% {
+    transform: translateX(-4px);
+  }
+
+  40% {
+    transform: translateX(4px);
+  }
+
+  60% {
+    transform: translateX(-3px);
+  }
+
+  80% {
+    transform: translateX(3px);
+  }
 }
 
 .link-preview-line {
